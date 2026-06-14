@@ -183,7 +183,7 @@ export default function SettingsModal({
 
           {activeTab === 'about' && (
             <div>
-              <h3 className="text-base font-semibold mb-1">About Pomito</h3>
+              <h3 className="text-base font-semibold mb-1">About PomoZen</h3>
               <p className="text-sm mb-4" style={{ color: 'var(--text-tertiary)' }}>
                 A premium Pomodoro productivity app.
               </p>

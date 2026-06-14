@@ -12,8 +12,10 @@ import SoundController from './components/SoundController'
 import { audioSynth } from './context/audioSynthesizer'
 import type { Task, AmbientSoundType } from './types'
 
-const LOCAL_STORAGE_TASKS_KEY = 'pomito-tasks'
-const LOCAL_STORAGE_ACTIVE_TASK_KEY = 'pomito-active-task-id'
+const LOCAL_STORAGE_TASKS_KEY = 'PomoZen-tasks'
+const LOCAL_STORAGE_ACTIVE_TASK_KEY = 'PomoZen-active-task-id'
+const OLD_LOCAL_STORAGE_TASKS_KEY = 'pomito-tasks'
+const OLD_LOCAL_STORAGE_ACTIVE_TASK_KEY = 'pomito-active-task-id'
 
 function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -35,11 +37,26 @@ function App() {
   // Task checklist state
   const [tasks, setTasks] = useState<Task[]>(() => {
     const stored = localStorage.getItem(LOCAL_STORAGE_TASKS_KEY)
-    return stored ? JSON.parse(stored) : []
+    if (stored) return JSON.parse(stored)
+    const oldStored = localStorage.getItem(OLD_LOCAL_STORAGE_TASKS_KEY)
+    if (oldStored) {
+      localStorage.setItem(LOCAL_STORAGE_TASKS_KEY, oldStored)
+      localStorage.removeItem(OLD_LOCAL_STORAGE_TASKS_KEY)
+      return JSON.parse(oldStored)
+    }
+    return []
   })
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(() => {
-    return localStorage.getItem(LOCAL_STORAGE_ACTIVE_TASK_KEY)
+    const stored = localStorage.getItem(LOCAL_STORAGE_ACTIVE_TASK_KEY)
+    if (stored) return stored
+    const oldStored = localStorage.getItem(OLD_LOCAL_STORAGE_ACTIVE_TASK_KEY)
+    if (oldStored) {
+      localStorage.setItem(LOCAL_STORAGE_ACTIVE_TASK_KEY, oldStored)
+      localStorage.removeItem(OLD_LOCAL_STORAGE_ACTIVE_TASK_KEY)
+      return oldStored
+    }
+    return null
   })
 
   // Soundscape state

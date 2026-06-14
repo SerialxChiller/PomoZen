@@ -15,7 +15,7 @@ export default function Header({ onOpenSettings }: HeaderProps) {
         >
           P
         </div>
-        <span className="text-lg font-semibold tracking-tight">Pomito</span>
+        <span className="text-lg font-semibold tracking-tight">PomoZen</span>
       </div>
 
       <nav className="flex items-center gap-1">

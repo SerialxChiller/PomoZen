@@ -1,8 +1,8 @@
-# 🍅 Pomito — Premium Pomodoro Timer
+# 🧘 PomoZen — Premium Pomodoro Timer
 
 A beautiful, feature-rich Pomodoro timer built with **React + TypeScript + Vite + TailwindCSS**.
 
-![Pomito Preview](./public/vite.svg)
+![PomoZen Preview](./public/vite.svg)
 
 ## ✨ Features
 
@@ -25,8 +25,8 @@ A beautiful, feature-rich Pomodoro timer built with **React + TypeScript + Vite 
 
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/pomito.git
-cd pomito
+git clone https://github.com/YOUR_USERNAME/PomoZen.git
+cd PomoZen
 
 # Install dependencies
 npm install

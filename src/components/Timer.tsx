@@ -65,9 +65,9 @@ export default function Timer({ timeLeft, totalTime, status, mode, activeTaskTit
   // Update HTML document title dynamically to display remaining time
   useEffect(() => {
     const modeLabel = mode === 'focus' ? 'Focus' : 'Break'
-    document.title = `${display} | Pomito — ${modeLabel}`
+    document.title = `${display} | PomoZen — ${modeLabel}`
     return () => {
-      document.title = 'Pomito — Premium Pomodoro'
+      document.title = 'PomoZen — Premium Pomodoro'
     }
   }, [display, mode])
 
