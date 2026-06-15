@@ -1,5 +1,20 @@
 import type { AmbientSoundType } from '../types'
 
+interface DiagnosticState {
+  ctxCreated: number
+  ctxResumed: number
+  ctxFailed: number
+  nodesCreated: number
+  nodesStarted: number
+  nodesFailed: number
+  beepAttempted: number
+  beepSucceeded: number
+  beepFailed: number
+  lastError: string | null
+  lastOperation: string | null
+  log: string[]
+}
+
 class AudioSynthManager {
   private ctx: AudioContext | null = null
   private noiseNode: AudioBufferSourceNode | null = null
@@ -8,13 +23,34 @@ class AudioSynthManager {
   private currentType: AmbientSoundType = 'none'
   private volume: number = 0.3
 
+  public diag: DiagnosticState = {
+    ctxCreated: 0,
+    ctxResumed: 0,
+    ctxFailed: 0,
+    nodesCreated: 0,
+    nodesStarted: 0,
+    nodesFailed: 0,
+    beepAttempted: 0,
+    beepSucceeded: 0,
+    beepFailed: 0,
+    lastError: null,
+    lastOperation: null,
+    log: [],
+  }
+
   constructor() {
     // Lazy initialize when user interacts
   }
 
+  private log(msg: string) {
+    this.diag.log.push(`[${Date.now()}] ${msg}`)
+    if (this.diag.log.length > 100) this.diag.log.shift()
+  }
+
   private async ensureContext(): Promise<boolean> {
-    // If context was closed by the browser (tab suspension), re-create it
+    this.diag.lastOperation = 'ensureContext'
     if (this.ctx?.state === 'closed') {
+      this.log('ctx closed, cleaning up')
       this.cleanupNodes()
       this.ctx = null
       this.gainNode = null
@@ -27,8 +63,12 @@ class AudioSynthManager {
         this.gainNode = this.ctx.createGain()
         this.gainNode.gain.setValueAtTime(this.volume, this.ctx.currentTime)
         this.gainNode.connect(this.ctx.destination)
+        this.diag.ctxCreated++
+        this.log('AudioContext created')
       } catch (e) {
-        console.error('Failed to initialize AudioContext:', e)
+        this.diag.ctxFailed++
+        this.diag.lastError = String(e)
+        this.log(`ctx create failed: ${e}`)
         return false
       }
     }
@@ -36,8 +76,11 @@ class AudioSynthManager {
     if (this.ctx.state === 'suspended') {
       try {
         await this.ctx.resume()
+        this.diag.ctxResumed++
+        this.log('AudioContext resumed')
       } catch (e) {
-        console.error('Failed to resume AudioContext:', e)
+        this.diag.lastError = String(e)
+        this.log(`ctx resume failed: ${e}`)
         return false
       }
     }
@@ -47,12 +90,12 @@ class AudioSynthManager {
 
   private cleanupNodes() {
     if (this.noiseNode) {
-      try { this.noiseNode.stop() } catch { /* already stopped */ }
-      try { this.noiseNode.disconnect() } catch { /* already disconnected */ }
+      try { this.noiseNode.stop() } catch { }
+      try { this.noiseNode.disconnect() } catch { }
       this.noiseNode = null
     }
     if (this.filterNode) {
-      try { this.filterNode.disconnect() } catch { /* already disconnected */ }
+      try { this.filterNode.disconnect() } catch { }
       this.filterNode = null
     }
   }
@@ -61,7 +104,105 @@ class AudioSynthManager {
     return this.ensureContext()
   }
 
-  // Generate 10 seconds of White Noise (longer buffer for iOS loop reliability)
+  // Synchronous context initialization — MUST be called within user gesture
+  public initContextSync(): boolean {
+    this.diag.lastOperation = 'initContextSync'
+    this.log('initContextSync called')
+
+    if (this.ctx?.state === 'closed') {
+      this.log('ctx closed, re-creating')
+      this.cleanupNodes()
+      this.ctx = null
+      this.gainNode = null
+    }
+
+    if (!this.ctx) {
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+        this.ctx = new AudioCtx()
+        this.gainNode = this.ctx.createGain()
+        this.gainNode.gain.setValueAtTime(this.volume, this.ctx.currentTime)
+        this.gainNode.connect(this.ctx.destination)
+        this.diag.ctxCreated++
+        this.log('AudioContext created (sync)')
+      } catch (e) {
+        this.diag.ctxFailed++
+        this.diag.lastError = String(e)
+        this.log(`ctx create failed (sync): ${e}`)
+        return false
+      }
+    }
+
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume()
+      this.diag.ctxResumed++
+      this.log('ctx.resume() called (sync)')
+    }
+
+    this.log(`ctx state after initContextSync: ${this.ctx.state}`)
+    return this.ctx !== null
+  }
+
+  // Synchronous playback — ALL node creation happens in one synchronous block
+  // This is critical for iOS WebKit which requires nodes to be created within user gesture
+  public playSync(type: AmbientSoundType): boolean {
+    this.diag.lastOperation = `playSync(${type})`
+    this.log(`playSync(${type}) called`)
+
+    this.cleanupNodes()
+    this.currentType = type
+
+    if (type === 'none' || type === 'metronome') {
+      this.log(`playSync: ${type} — no background sound needed`)
+      return true
+    }
+
+    if (!this.ctx || !this.gainNode) {
+      this.diag.lastError = 'No AudioContext'
+      this.log('playSync failed: no ctx')
+      return false
+    }
+
+    try {
+      let buffer: AudioBuffer
+      if (type === 'white-noise') {
+        buffer = this.createWhiteNoiseBuffer()
+      } else if (type === 'brown-noise') {
+        buffer = this.createBrownNoiseBuffer()
+      } else if (type === 'rain') {
+        buffer = this.createRainBuffer()
+      } else {
+        this.log(`playSync: unknown type ${type}`)
+        return false
+      }
+
+      const source = this.ctx.createBufferSource()
+      source.buffer = buffer
+      source.loop = true
+
+      const filter = this.ctx.createBiquadFilter()
+      filter.type = 'lowpass'
+      filter.frequency.setValueAtTime(type === 'rain' ? 1400 : 750, this.ctx.currentTime)
+
+      source.connect(filter)
+      filter.connect(this.gainNode)
+
+      source.start(0)
+      this.noiseNode = source
+      this.filterNode = filter
+      this.diag.nodesCreated++
+      this.diag.nodesStarted++
+      this.log(`playSync(${type}): nodes created and started successfully`)
+      return true
+    } catch (e) {
+      this.diag.nodesFailed++
+      this.diag.lastError = String(e)
+      this.log(`playSync error: ${e}`)
+      return false
+    }
+  }
+
+  // Generate 10 seconds of White Noise
   private createWhiteNoiseBuffer(): AudioBuffer {
     if (!this.ctx) throw new Error('No context')
     const bufferSize = this.ctx.sampleRate * 10
@@ -127,8 +268,13 @@ class AudioSynthManager {
   }
 
   public async play(type: AmbientSoundType) {
+    this.diag.lastOperation = `play(${type})`
+    this.log(`play(${type}) called`)
     const ready = await this.ensureContext()
-    if (!ready || !this.ctx || !this.gainNode) return
+    if (!ready || !this.ctx || !this.gainNode) {
+      this.log('play aborted: ctx not ready')
+      return
+    }
 
     this.cleanupNodes()
     this.currentType = type
@@ -163,8 +309,13 @@ class AudioSynthManager {
       source.start(0)
       this.noiseNode = source
       this.filterNode = filter
+      this.diag.nodesCreated++
+      this.diag.nodesStarted++
+      this.log(`play(${type}): nodes created and started`)
     } catch (e) {
-      console.error('Failed to play synthesized soundscape:', e)
+      this.diag.nodesFailed++
+      this.diag.lastError = String(e)
+      this.log(`play error: ${e}`)
     }
   }
 
@@ -173,7 +324,6 @@ class AudioSynthManager {
     this.currentType = 'none'
   }
 
-  // Play a soft click sound for the metronome
   public async playTick() {
     const ready = await this.ensureContext()
     if (!ready || !this.ctx || !this.gainNode || this.currentType !== 'metronome') return
@@ -199,7 +349,6 @@ class AudioSynthManager {
     }
   }
 
-  // Play a beautiful bell/chime note sequence on completion
   public async playSessionChime(isBreak: boolean) {
     const ready = await this.ensureContext()
     if (!ready || !this.ctx || !this.gainNode) return
@@ -227,6 +376,72 @@ class AudioSynthManager {
       })
     } catch (e) {
       // Audio issue
+    }
+  }
+
+  // Diagnostic test: play a simple 440Hz tone for 1 second
+  public testBeep(): { success: boolean; ctxState: string; error?: string; details: string[] } {
+    this.diag.beepAttempted++
+    this.diag.lastOperation = 'testBeep'
+    const details: string[] = []
+
+    details.push(`ctx exists: ${!!this.ctx}`)
+    details.push(`ctx state: ${this.ctx?.state ?? 'null'}`)
+    details.push(`gainNode exists: ${!!this.gainNode}`)
+    this.log(`testBeep: ctx exists=${!!this.ctx}, state=${this.ctx?.state}`)
+
+    if (!this.ctx || !this.gainNode) {
+      const inited = this.initContextSync()
+      details.push(`initContextSync result: ${inited}`)
+      details.push(`ctx state after init: ${this.ctx?.state ?? 'null'}`)
+      this.log(`testBeep: initContextSync returned ${inited}, state=${this.ctx?.state}`)
+    }
+
+    if (!this.ctx || !this.gainNode) {
+      this.diag.beepFailed++
+      this.diag.lastError = 'Failed to init AudioContext'
+      details.push('FAIL: no ctx available')
+      this.log('testBeep: no ctx after init')
+      return { success: false, ctxState: 'null', error: 'Failed to init AudioContext', details }
+    }
+
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume()
+      details.push('ctx.resume() called')
+      this.log('testBeep: ctx was suspended, resume() called')
+    }
+
+    try {
+      const osc = this.ctx.createOscillator()
+      details.push('oscillator created')
+      const gain = this.ctx.createGain()
+      details.push('gain created')
+
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(440, this.ctx.currentTime)
+
+      gain.gain.setValueAtTime(0.3, this.ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 1)
+
+      osc.connect(gain)
+      gain.connect(this.gainNode)
+      details.push('nodes connected')
+
+      osc.start()
+      details.push('osc.start() called')
+      osc.stop(this.ctx.currentTime + 1)
+      details.push('osc.stop() called')
+
+      this.diag.beepSucceeded++
+      details.push('BEEP: SUCCESS')
+      this.log('testBeep: SUCCESS')
+      return { success: true, ctxState: this.ctx.state, details }
+    } catch (e) {
+      this.diag.beepFailed++
+      this.diag.lastError = String(e)
+      details.push(`ERROR: ${e}`)
+      this.log(`testBeep: ERROR: ${e}`)
+      return { success: false, ctxState: this.ctx?.state ?? 'null', error: String(e), details }
     }
   }
 }

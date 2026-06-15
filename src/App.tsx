@@ -9,6 +9,7 @@ import SettingsModal from './components/SettingsModal'
 import FloatingShapes from './components/FloatingShapes'
 import TaskList from './components/TaskList'
 import SoundController from './components/SoundController'
+import AudioDiagnostics from './components/AudioDiagnostics'
 import { audioSynth } from './context/audioSynthesizer'
 import type { Task, AmbientSoundType } from './types'
 
@@ -239,6 +240,8 @@ function App() {
         sessions={sessions}
         onConfigChange={updateConfig}
       />
+
+      <AudioDiagnostics />
     </div>
   )
 }
