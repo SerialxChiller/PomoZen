@@ -22,6 +22,7 @@ class AudioSynthManager {
   private filterNode: BiquadFilterNode | null = null
   private currentType: AmbientSoundType = 'none'
   private volume: number = 0.3
+  private unlocked: boolean = false
 
   public diag: DiagnosticState = {
     ctxCreated: 0,
@@ -39,7 +40,94 @@ class AudioSynthManager {
   }
 
   constructor() {
-    // Lazy initialize when user interacts
+    this.initAudioSession()
+    this.createContextEarly()
+    this.setupAutoUnlock()
+  }
+
+  private initAudioSession() {
+    // iOS 17+ allows setting audio session to 'playback' so Web Audio API
+    // is not muted by the silent/ringer switch. Default is 'ambient' which
+    // causes Web Audio to be silenced when the device is muted.
+    try {
+      if ((navigator as any).audioSession) {
+        (navigator as any).audioSession.type = 'playback'
+        this.log('Audio session type set to playback')
+      }
+    } catch {
+      this.log('audioSession API not available')
+    }
+  }
+
+  private createContextEarly() {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+      this.ctx = new AudioCtx()
+      this.gainNode = this.ctx.createGain()
+      this.gainNode.gain.setValueAtTime(this.volume, this.ctx.currentTime)
+      this.gainNode.connect(this.ctx.destination)
+      this.diag.ctxCreated++
+      this.log('AudioContext created eagerly')
+    } catch (e) {
+      this.diag.ctxFailed++
+      this.diag.lastError = String(e)
+      this.log(`eager ctx create failed: ${e}`)
+    }
+  }
+
+  private setupAutoUnlock() {
+    // On iOS Safari, AudioContext starts in 'suspended' state and must be
+    // resumed from within a user gesture. We attach a one-time handler to
+    // the first click/touch on the page.
+    const tryUnlock = () => {
+      document.removeEventListener('click', tryUnlock)
+      document.removeEventListener('touchstart', tryUnlock)
+      document.removeEventListener('keydown', tryUnlock)
+
+      if (this.unlocked) return
+      this.unlocked = true
+      this.log('auto-unlock triggered')
+
+      if (!this.ctx) {
+        this.log('auto-unlock: no ctx, re-creating')
+        this.createContextEarly()
+      }
+
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume()
+        this.diag.ctxResumed++
+        this.log('ctx.resume() called from auto-unlock')
+      }
+
+      // Prime the audio pipeline with a near-silent oscillator.
+      // This forces iOS to fully initialize the audio path so that
+      // subsequent node creation and start() calls work reliably.
+      if (this.ctx && this.gainNode) {
+        try {
+          const osc = this.ctx.createOscillator()
+          const g = this.ctx.createGain()
+          g.gain.value = 0.001
+          osc.type = 'sine'
+          osc.frequency.value = 440
+          osc.connect(g)
+          g.connect(this.gainNode)
+          osc.start()
+          osc.stop(this.ctx.currentTime + 0.01)
+          this.log('auto-unlock: priming oscillator played')
+        } catch (e) {
+          this.log(`auto-unlock: priming failed: ${e}`)
+        }
+      }
+    }
+
+    try {
+      document.addEventListener('click', tryUnlock, { once: true })
+      document.addEventListener('touchstart', tryUnlock, { once: true })
+      document.addEventListener('keydown', tryUnlock, { once: true })
+      this.log('auto-unlock listeners attached')
+    } catch (e) {
+      this.log(`auto-unlock setup failed: ${e}`)
+    }
   }
 
   private log(msg: string) {
@@ -49,7 +137,8 @@ class AudioSynthManager {
 
   private async ensureContext(): Promise<boolean> {
     this.diag.lastOperation = 'ensureContext'
-    if (this.ctx?.state === 'closed') {
+
+    if (this.ctx && this.ctx.state === 'closed') {
       this.log('ctx closed, cleaning up')
       this.cleanupNodes()
       this.ctx = null
@@ -144,7 +233,6 @@ class AudioSynthManager {
   }
 
   // Synchronous playback — ALL node creation happens in one synchronous block
-  // This is critical for iOS WebKit which requires nodes to be created within user gesture
   public playSync(type: AmbientSoundType): boolean {
     this.diag.lastOperation = `playSync(${type})`
     this.log(`playSync(${type}) called`)
