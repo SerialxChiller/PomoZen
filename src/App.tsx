@@ -125,18 +125,18 @@ function App() {
   }, [timeLeft, status, currentSound])
 
   // Ensure AudioContext is initialized/resumed directly within user gesture
-  const handleStart = () => {
-    audioSynth.resumeContext()
+  const handleStart = async () => {
+    await audioSynth.resumeContext()
     start()
   }
 
-  const handleResume = () => {
-    audioSynth.resumeContext()
+  const handleResume = async () => {
+    await audioSynth.resumeContext()
     resume()
   }
 
-  const handleSoundChange = (sound: AmbientSoundType) => {
-    audioSynth.resumeContext()
+  const handleSoundChange = async (sound: AmbientSoundType) => {
+    await audioSynth.resumeContext()
     setCurrentSound(sound)
   }
 
