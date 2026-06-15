@@ -124,6 +124,22 @@ function App() {
     }
   }, [timeLeft, status, currentSound])
 
+  // Ensure AudioContext is initialized/resumed directly within user gesture
+  const handleStart = () => {
+    audioSynth.resumeContext()
+    start()
+  }
+
+  const handleResume = () => {
+    audioSynth.resumeContext()
+    resume()
+  }
+
+  const handleSoundChange = (sound: AmbientSoundType) => {
+    audioSynth.resumeContext()
+    setCurrentSound(sound)
+  }
+
   // Handlers for Checklist operations
   const handleAddTask = (title: string, estimatedPomodoros: number) => {
     const newTask: Task = {
@@ -187,9 +203,9 @@ function App() {
 
           <TimerControls
             status={status}
-            onStart={start}
+            onStart={handleStart}
             onPause={pause}
-            onResume={resume}
+            onResume={handleResume}
             onReset={reset}
             onSkip={skip}
           />
@@ -211,7 +227,7 @@ function App() {
           <SoundController
             currentSound={currentSound}
             volume={volume}
-            onSoundChange={setCurrentSound}
+            onSoundChange={handleSoundChange}
             onVolumeChange={setVolume}
           />
         </div>

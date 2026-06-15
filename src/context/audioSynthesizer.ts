@@ -4,15 +4,22 @@ class AudioSynthManager {
   private ctx: AudioContext | null = null
   private noiseNode: AudioBufferSourceNode | null = null
   private gainNode: GainNode | null = null
+  private filterNode: BiquadFilterNode | null = null
   private currentType: AmbientSoundType = 'none'
   private volume: number = 0.3
-
 
   constructor() {
     // Lazy initialize when user interacts
   }
 
-  private initContext() {
+  private async ensureContext(): Promise<boolean> {
+    // If context was closed by the browser (tab suspension), re-create it
+    if (this.ctx?.state === 'closed') {
+      this.cleanupNodes()
+      this.ctx = null
+      this.gainNode = null
+    }
+
     if (!this.ctx) {
       try {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
@@ -22,17 +29,42 @@ class AudioSynthManager {
         this.gainNode.connect(this.ctx.destination)
       } catch (e) {
         console.error('Failed to initialize AudioContext:', e)
+        return false
       }
     }
-    if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume()
+
+    if (this.ctx.state === 'suspended') {
+      try {
+        await this.ctx.resume()
+      } catch (e) {
+        console.error('Failed to resume AudioContext:', e)
+        return false
+      }
+    }
+
+    return this.ctx !== null
+  }
+
+  private cleanupNodes() {
+    if (this.noiseNode) {
+      try { this.noiseNode.stop() } catch { /* already stopped */ }
+      try { this.noiseNode.disconnect() } catch { /* already disconnected */ }
+      this.noiseNode = null
+    }
+    if (this.filterNode) {
+      try { this.filterNode.disconnect() } catch { /* already disconnected */ }
+      this.filterNode = null
     }
   }
 
-  // Generate 2 seconds of White Noise
+  public async resumeContext(): Promise<boolean> {
+    return this.ensureContext()
+  }
+
+  // Generate 10 seconds of White Noise (longer buffer for iOS loop reliability)
   private createWhiteNoiseBuffer(): AudioBuffer {
     if (!this.ctx) throw new Error('No context')
-    const bufferSize = this.ctx.sampleRate * 2
+    const bufferSize = this.ctx.sampleRate * 10
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate)
     const data = buffer.getChannelData(0)
     for (let i = 0; i < bufferSize; i++) {
@@ -41,10 +73,10 @@ class AudioSynthManager {
     return buffer
   }
 
-  // Generate 2 seconds of Brown Noise (deeper, warmer focus sound)
+  // Generate 10 seconds of Brown Noise
   private createBrownNoiseBuffer(): AudioBuffer {
     if (!this.ctx) throw new Error('No context')
-    const bufferSize = this.ctx.sampleRate * 2
+    const bufferSize = this.ctx.sampleRate * 10
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate)
     const data = buffer.getChannelData(0)
     let lastOut = 0.0
@@ -52,30 +84,28 @@ class AudioSynthManager {
       const white = Math.random() * 2 - 1
       data[i] = (lastOut + 0.02 * white) / 1.02
       lastOut = data[i]
-      data[i] *= 3.5 // compensation gain
+      data[i] *= 3.5
     }
     return buffer
   }
 
-  // Generate Rain Buffer (brown noise base + high pass crackles)
+  // Generate Rain Buffer (10 seconds)
   private createRainBuffer(): AudioBuffer {
     if (!this.ctx) throw new Error('No context')
-    const bufferSize = this.ctx.sampleRate * 3
+    const bufferSize = this.ctx.sampleRate * 10
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate)
     const data = buffer.getChannelData(0)
     let lastOut = 0.0
     for (let i = 0; i < bufferSize; i++) {
       const white = Math.random() * 2 - 1
-      // Brown noise component
       const brown = (lastOut + 0.015 * white) / 1.015
       lastOut = brown
-      
-      // Rain drops (very short high frequency spikes)
+
       let crackle = 0
       if (Math.random() < 0.0015) {
         crackle = (Math.random() * 2 - 1) * 0.12
       }
-      
+
       data[i] = (brown * 2.2) + crackle
     }
     return buffer
@@ -96,15 +126,15 @@ class AudioSynthManager {
     return this.currentType
   }
 
-  public play(type: AmbientSoundType) {
-    this.initContext()
-    if (!this.ctx || !this.gainNode) return
+  public async play(type: AmbientSoundType) {
+    const ready = await this.ensureContext()
+    if (!ready || !this.ctx || !this.gainNode) return
 
-    this.stop()
+    this.cleanupNodes()
     this.currentType = type
 
     if (type === 'none' || type === 'metronome') {
-      return // Metronome clicks on demand, no looping background noise
+      return
     }
 
     let buffer: AudioBuffer
@@ -123,7 +153,6 @@ class AudioSynthManager {
       source.buffer = buffer
       source.loop = true
 
-      // Low pass filter to make it warmer
       const filter = this.ctx.createBiquadFilter()
       filter.type = 'lowpass'
       filter.frequency.setValueAtTime(type === 'rain' ? 1400 : 750, this.ctx.currentTime)
@@ -133,28 +162,21 @@ class AudioSynthManager {
 
       source.start(0)
       this.noiseNode = source
+      this.filterNode = filter
     } catch (e) {
       console.error('Failed to play synthesized soundscape:', e)
     }
   }
 
   public stop() {
-    if (this.noiseNode) {
-      try {
-        this.noiseNode.stop()
-      } catch (e) {
-        // Already stopped
-      }
-      this.noiseNode.disconnect()
-      this.noiseNode = null
-    }
+    this.cleanupNodes()
     this.currentType = 'none'
   }
 
   // Play a soft click sound for the metronome
-  public playTick() {
-    this.initContext()
-    if (!this.ctx || !this.gainNode || this.currentType !== 'metronome') return
+  public async playTick() {
+    const ready = await this.ensureContext()
+    if (!ready || !this.ctx || !this.gainNode || this.currentType !== 'metronome') return
 
     try {
       const osc = this.ctx.createOscillator()
@@ -178,13 +200,13 @@ class AudioSynthManager {
   }
 
   // Play a beautiful bell/chime note sequence on completion
-  public playSessionChime(isBreak: boolean) {
-    this.initContext()
-    if (!this.ctx || !this.gainNode) return
+  public async playSessionChime(isBreak: boolean) {
+    const ready = await this.ensureContext()
+    if (!ready || !this.ctx || !this.gainNode) return
 
     try {
       const now = this.ctx.currentTime
-      const notes = isBreak ? [392, 523, 659] : [659, 523, 392] // Arpeggio upwards for break, downwards for focus
+      const notes = isBreak ? [392, 523, 659] : [659, 523, 392]
 
       notes.forEach((freq, idx) => {
         const osc = this.ctx!.createOscillator()
