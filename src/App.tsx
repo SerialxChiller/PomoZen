@@ -106,17 +106,15 @@ function App() {
     audioSynth.setVolume(volume)
   }, [volume])
 
-  // Sync ambient sound playing status
+  // Stop ambient sound when timer is not running
   useEffect(() => {
-    if (status === 'running') {
-      audioSynth.play(currentSound)
-    } else {
+    if (status !== 'running') {
       audioSynth.stop()
     }
     return () => {
       audioSynth.stop()
     }
-  }, [currentSound, status])
+  }, [status])
 
   // Play metronome clicks synchronizing with second transitions
   useEffect(() => {
@@ -125,19 +123,32 @@ function App() {
     }
   }, [timeLeft, status, currentSound])
 
-  // Ensure AudioContext is initialized/resumed directly within user gesture
-  const handleStart = async () => {
-    await audioSynth.resumeContext()
+  // All audio operations below are synchronous and run within user gesture
+  // This is required by iOS Safari WebKit where AudioBufferSourceNode.start()
+  // is a silent no-op when called outside a user gesture handler.
+  const handleStart = () => {
+    audioSynth.initContextSync()
+    if (audioSynth.getCurrentType() !== 'none') {
+      audioSynth.playSync(audioSynth.getCurrentType())
+    }
     start()
   }
 
-  const handleResume = async () => {
-    await audioSynth.resumeContext()
+  const handleResume = () => {
+    audioSynth.initContextSync()
+    if (audioSynth.getCurrentType() !== 'none') {
+      audioSynth.playSync(audioSynth.getCurrentType())
+    }
     resume()
   }
 
-  const handleSoundChange = async (sound: AmbientSoundType) => {
-    await audioSynth.resumeContext()
+  const handleSoundChange = (sound: AmbientSoundType) => {
+    audioSynth.initContextSync()
+    if (sound === 'none') {
+      audioSynth.stop()
+    } else {
+      audioSynth.playSync(sound)
+    }
     setCurrentSound(sound)
   }
 
