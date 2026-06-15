@@ -41,6 +41,7 @@ class AudioSynthManager {
 
   constructor() {
     this.initAudioSession()
+    this.setupAudioSessionCapture()
     this.createContextEarly()
     this.setupAutoUnlock()
   }
@@ -56,6 +57,32 @@ class AudioSynthManager {
       }
     } catch {
       this.log('audioSession API not available')
+    }
+  }
+
+  // Capture-phase listeners ensure audioSession.type = 'playback' is set
+  // on the very first user gesture, before any other handler runs.
+  // This is required because on iOS the setting may only be honored when
+  // assigned within a user gesture event (not at script load time).
+  private setupAudioSessionCapture() {
+    const setPlayback = () => {
+      try {
+        if ((navigator as any).audioSession) {
+          (navigator as any).audioSession.type = 'playback'
+          this.log('Audio session type set to playback (capture-phase)')
+        }
+      } catch {
+        // silent
+      }
+    }
+
+    try {
+      document.addEventListener('click', setPlayback, { capture: true, once: true } as AddEventListenerOptions)
+      document.addEventListener('touchstart', setPlayback, { capture: true, once: true } as AddEventListenerOptions)
+      document.addEventListener('pointerdown', setPlayback, { capture: true, once: true } as AddEventListenerOptions)
+      this.log('Audio session capture-phase listeners attached')
+    } catch {
+      this.log('Failed to attach capture-phase listeners')
     }
   }
 
